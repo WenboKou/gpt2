@@ -66,7 +66,7 @@ class Block(nn.Module):
         return self.mlp(x)
 
 
-class GPT2(nn.Module):
+class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.transformer = nn.ModuleDict(dict(
@@ -76,3 +76,54 @@ class GPT2(nn.Module):
             ln_f=nn.LayerNorm(config.n_embd)
         ))
         self.lm_head = nn.Linear(config.vocab_size, config.n_embd, bias=False)
+
+    def forward(self, idx):
+        B, T = idx.shape
+        pos = torch.arange(T, device=idx.device)
+        pos_embd = self.transformer.wpe(pos)
+        token_embd = self.transformer.wte(idx)
+        x = pos_embd + token_embd
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x)
+        return logits
+
+    @classmethod
+    def from_pretrained(cls, model_type):
+        assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
+        from transformers import GPT2LMHeadModel
+        print(f"loading weights from pretrained GPT: {model_type}")
+
+        config_args = {
+            "gpt2": dict(n_layer=12, n_head=12, n_embd=768),
+            "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),
+            "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),
+            "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600)
+        }[model_type]
+        config_args["vocab_size"] = 50257
+        config_args["block_size"] = 1024
+        config = GPTConfig(**config_args)
+        model = GPT(config)
+        sd = model.state_dict()
+        sd_keys = [sd_key for sd_key in sd.keys() if not sd_key.endswith("attn.bias")]
+
+        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
+        sd_hf = model_hf.state_dict()
+        sd_keys_hf = [sd_key for sd_key in sd_hf.keys() if
+                      not sd_key.endswith(".attn.masked_bias") and not sd_key.endswith(".attn.bias")]
+
+        conv1d2linear = ["attn.c_attn.weight", "attn.c_proj.weight", "mlp.c_fc.weight", "mlp.c_proj.weight"]
+
+        for k in sd_keys:
+            if any([k.endswith(m) for m in conv1d2linear]):
+                sd[k].copy_(sd_hf[k].t())
+            else:
+                sd[k].copy_(sd_hf[k])
+        return model
+
+    # TODO: 写个函数自动计算参数的数量
+
+
+if __name__ == "__main__":
+    GPT.from_pretrained("we")
