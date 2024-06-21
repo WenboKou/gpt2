@@ -27,14 +27,14 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.shape
         x = self.c_attn(x)
-        q, k, v = x.split(3, dim=-1)
+        q, k, v = x.split(self.config.n_embd, dim=-1)
         q = q.view(B, T, self.config.n_head, -1).transpose(1, 2)
         k = k.view(B, T, self.config.n_head, -1).transpose(1, 2)
         v = v.view(B, T, self.config.n_head, -1).transpose(1, 2)
-        attention = q @ k.transpose(1, 2) / np.sqrt(q.shape[0])
-        masked_attention = attention.masked_fill(self.bias == 0, float("-inf"))
-        y = F.softmax(masked_attention) @ v
-        y = y.transpose(1, 2).view(B, T, -1)
+        attention = q @ k.transpose(2, 3) / np.sqrt(q.shape[-1])
+        masked_attention = attention.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+        y = F.softmax(masked_attention, dim=-1) @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, -1)
         return self.c_proj(y)
 
 
@@ -75,7 +75,7 @@ class GPT(nn.Module):
             h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f=nn.LayerNorm(config.n_embd)
         ))
-        self.lm_head = nn.Linear(config.vocab_size, config.n_embd, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
     def forward(self, idx):
         B, T = idx.shape
@@ -106,12 +106,14 @@ class GPT(nn.Module):
         config = GPTConfig(**config_args)
         model = GPT(config)
         sd = model.state_dict()
-        sd_keys = [sd_key for sd_key in sd.keys() if not sd_key.endswith("attn.bias")]
+        sd_keys = [sd_key for sd_key in sd.keys() if not sd_key.endswith(".attn.bias")]
 
         model_hf = GPT2LMHeadModel.from_pretrained(model_type)
         sd_hf = model_hf.state_dict()
         sd_keys_hf = [sd_key for sd_key in sd_hf.keys() if
                       not sd_key.endswith(".attn.masked_bias") and not sd_key.endswith(".attn.bias")]
+
+        assert len(sd_keys_hf) == len(sd_keys), f"{len(sd_keys_hf)} != {len(sd_keys)}"
 
         conv1d2linear = ["attn.c_attn.weight", "attn.c_proj.weight", "mlp.c_fc.weight", "mlp.c_proj.weight"]
 
@@ -119,11 +121,22 @@ class GPT(nn.Module):
             if any([k.endswith(m) for m in conv1d2linear]):
                 sd[k].copy_(sd_hf[k].t())
             else:
+                assert sd[k].shape == sd_hf[k].shape, f"{k}: {sd[k].shape} != {sd_hf[k].shape}"
                 sd[k].copy_(sd_hf[k])
         return model
 
     # TODO: 写个函数自动计算参数的数量
 
 
-if __name__ == "__main__":
-    GPT.from_pretrained("we")
+max_length = 30
+num_return_sequences = 5
+
+model = GPT.from_pretrained("gpt2")
+model.eval()
+
+import tiktoken
+
+enc = tiktoken.get_encoding("gpt2")
+tokens = enc.encode("Hello, I'm a language model,")
+tokens = torch.tensor(tokens, dtype=torch.long)
+x = tokens.repeat(5, 1)
