@@ -139,25 +139,47 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print("using device: ", device)
 
+import tiktoken
+
+
+class DataLoaderLite:
+    def __init__(self, B, T):
+        self.B = B
+        self.T = T
+        enc = tiktoken.get_encoding("gpt2")
+        with open("input.txt", "r") as f:
+            text = f.read()
+        self.tokens = torch.tensor(enc.encode(text))
+        print(f"total tokens: {len(self.tokens)}")
+        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+
+        self.current_pos = 0
+
+    def next_batch(self):
+        start_pos = self.current_pos * (self.B * self.T)
+        end_pos = start_pos + (self.B * self.T)
+        buf = self.tokens[start_pos:end_pos + 1]
+        x = torch.tensor(buf[:-1]).view(self.B, self.T)
+        y = torch.tensor(buf[1:]).view(self.B, self.T)
+        if start_pos > len(self.tokens):
+            self.current_pos = 0
+        else:
+            self.current_pos += 1
+        return x, y
+
+
 # model = GPT.from_pretrained("gpt2")
 model = GPT(GPTConfig())
 model.eval()
 model.to(device)
 
-import tiktoken
-
-enc = tiktoken.get_encoding("gpt2")
-B, T = 4, 32
-with open("input.txt", "r") as f:
-    text = f.read()
-tokens = enc.encode(text)
-buf = tokens[:B * T + 1]
-x = torch.tensor(buf[:-1]).view(B, T)
-y = torch.tensor(buf[1:]).view(B, T)
+dataloader = DataLoaderLite(4, 32)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
     optimizer.zero_grad()
+    x, y = dataloader.next_batch()
+    x, y = x.to(device), y.to(device)
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
