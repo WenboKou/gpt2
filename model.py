@@ -60,10 +60,9 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = self.ln_1(x)
-        x = self.attn(x)
-        x = self.ln_2(x)
-        return self.mlp(x)
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
 
 
 class GPT(nn.Module):
@@ -141,13 +140,7 @@ tokens = enc.encode("Hello, I'm a language model,")
 tokens = torch.tensor(tokens, dtype=torch.long)
 x = tokens.repeat(5, 1)
 
-import tiktoken
-
-enc = tiktoken.get_encoding("gpt2")
-tokens = enc.encode("Hello, I'm a language model,")
-tokens = torch.tensor(tokens, dtype=torch.long)
-x = tokens.repeat(5, 1)
-
+torch.manual_seed(42)
 while x.shape[-1] < max_length:
     logits = model(x)[:, -1, :]
     logits = F.softmax(logits, dim=-1)
