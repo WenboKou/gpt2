@@ -155,6 +155,10 @@ buf = tokens[:B * T + 1]
 x = torch.tensor(buf[:-1]).view(B, T)
 y = torch.tensor(buf[1:]).view(B, T)
 
-logits, loss = model(x, y)
-
-print("loss: ", loss)
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+for i in range(50):
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"step: {i}, loss: {loss.item()}")
