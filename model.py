@@ -188,13 +188,14 @@ class DataLoaderLite:
             self.current_pos += 1
         return x, y
 
+torch.set_float32_matmul_precision("high")
 
 # model = GPT.from_pretrained("gpt2")
 model = GPT(GPTConfig())
 model.eval()
 model.to(device)
 
-dataloader = DataLoaderLite(16, 1024)
+dataloader = DataLoaderLite(4, 1024)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
@@ -208,4 +209,5 @@ for i in range(50):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    print(f"step: {i}, loss: {loss.item()}, dt: {dt:.2f}ms")
+    tokens_per_sec = (dataloader.B * dataloader.T) / (t1 - t0)
+    print(f"step: {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
