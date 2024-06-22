@@ -76,7 +76,7 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-    def forward(self, idx):
+    def forward(self, idx, targets=None):
         B, T = idx.shape
         pos = torch.arange(T, device=idx.device)
         pos_embd = self.transformer.wpe(pos)
@@ -86,7 +86,10 @@ class GPT(nn.Module):
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-        return logits
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(B * T, -1), targets.view(-1))
+        return logits, loss
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -127,6 +130,8 @@ class GPT(nn.Module):
     # TODO: 写个函数自动计算参数的数量
 
 
+torch.manual_seed(42)
+
 device = "cpu"
 if torch.cuda.is_available():
     device = "cuda"
@@ -134,29 +139,22 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print("using device: ", device)
 
-max_length = 30
-num_return_sequences = 5
-
-model = GPT.from_pretrained("gpt2")
+# model = GPT.from_pretrained("gpt2")
+model = GPT(GPTConfig())
 model.eval()
 model.to(device)
 
 import tiktoken
 
 enc = tiktoken.get_encoding("gpt2")
-tokens = enc.encode("Hello, I'm a language model,")
-tokens = torch.tensor(tokens, dtype=torch.long)
-x = tokens.repeat(5, 1)
-x = x.to(device)
+B, T = 4, 32
+with open("input.txt", "r") as f:
+    text = f.read()
+tokens = enc.encode(text)
+buf = tokens[:B * T + 1]
+x = torch.tensor(buf[:-1]).view(B, T)
+y = torch.tensor(buf[1:]).view(B, T)
 
-torch.manual_seed(42)
-while x.shape[-1] < max_length:
-    logits = model(x)[:, -1, :]
-    logits = F.softmax(logits, dim=-1)
-    topk_probs, topk_idx = torch.topk(logits, 50, dim=-1)
-    ix = torch.multinomial(topk_probs, 1)
-    y = torch.gather(topk_idx, -1, ix)
-    x = torch.cat((x, y), dim=-1)
+logits, loss = model(x, y)
 
-for row in range(x.shape[0]):
-    print(">", enc.decode(x[row].tolist()))
+print("loss: ", loss)
