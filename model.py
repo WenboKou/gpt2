@@ -160,6 +160,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print("using device: ", device)
 
 import tiktoken
+import time
 
 
 class DataLoaderLite:
@@ -193,14 +194,18 @@ model = GPT(GPTConfig())
 model.eval()
 model.to(device)
 
-dataloader = DataLoaderLite(4, 32)
+dataloader = DataLoaderLite(16, 1024)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
+    t0 = time.time()
     optimizer.zero_grad()
     x, y = dataloader.next_batch()
     x, y = x.to(device), y.to(device)
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    print(f"step: {i}, loss: {loss.item()}")
+    torch.cuda.synchronize()
+    t1 = time.time()
+    dt = (t1 - t0) * 1000
+    print(f"step: {i}, loss: {loss.item()}, dt: {dt:.2f}ms")
