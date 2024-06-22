@@ -21,6 +21,7 @@ class CausalSelfAttention(nn.Module):
         self.config = config
         self.c_attn = nn.Linear(config.n_embd, config.n_embd * 3)
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj.NANOGPT_SCALE_INIT = 1
         self.register_buffer("bias",
                              torch.tril(torch.ones(config.block_size, config.block_size)).unsqueeze(0).unsqueeze(0))
 
@@ -44,6 +45,7 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, config.n_embd * 4)
         self.gelu = nn.GELU(approximate="tanh")
         self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd)
+        self.c_proj.NANO_GPT_SCALE_INIT = 1
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -68,6 +70,7 @@ class Block(nn.Module):
 class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.transformer = nn.ModuleDict(dict(
             wte=nn.Embedding(config.vocab_size, config.n_embd),
             wpe=nn.Embedding(config.block_size, config.n_embd),
@@ -77,6 +80,19 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         self.transformer.wte.weight = self.lm_head.weight
+
+        self.apply(self.init_weights)
+
+    def init_weights(self, module):
+        std = 0.02
+        if isinstance(module, nn.Linear):
+            if hasattr(module, "NANOGPT_SCALE_INIT"):
+                std *= (2 * self.config.n_layer) ** -0.5
+                nn.init.normal_(module.weight, mean=0, std=std)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0, std=std)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
@@ -132,7 +148,9 @@ class GPT(nn.Module):
     # TODO: 写个函数自动计算参数的数量
 
 
-torch.manual_seed(42)
+torch.manual_seed(1337)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(1337)
 
 device = "cpu"
 if torch.cuda.is_available():
