@@ -141,13 +141,20 @@ tokens = enc.encode("Hello, I'm a language model,")
 tokens = torch.tensor(tokens, dtype=torch.long)
 x = tokens.repeat(5, 1)
 
+import tiktoken
+
+enc = tiktoken.get_encoding("gpt2")
+tokens = enc.encode("Hello, I'm a language model,")
+tokens = torch.tensor(tokens, dtype=torch.long)
+x = tokens.repeat(5, 1)
+
 while x.shape[-1] < max_length:
     logits = model(x)[:, -1, :]
-    logits = F.softmax(y, dim=-1)
-    topk_probs, topk_idx = torch.topk(y, 50, dim=-1)
+    logits = F.softmax(logits, dim=-1)
+    topk_probs, topk_idx = torch.topk(logits, 50, dim=-1)
     ix = torch.multinomial(topk_probs, 1)
     y = torch.gather(topk_idx, -1, ix)
     x = torch.cat((x, y), dim=-1)
 
-for row in x.row_indices():
+for row in range(x.shape[0]):
     print(">", enc.decode(x[row].tolist()))
