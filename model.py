@@ -127,11 +127,19 @@ class GPT(nn.Module):
     # TODO: 写个函数自动计算参数的数量
 
 
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+print("using device: ", device)
+
 max_length = 30
 num_return_sequences = 5
 
 model = GPT.from_pretrained("gpt2")
 model.eval()
+model.to(device)
 
 import tiktoken
 
@@ -139,6 +147,7 @@ enc = tiktoken.get_encoding("gpt2")
 tokens = enc.encode("Hello, I'm a language model,")
 tokens = torch.tensor(tokens, dtype=torch.long)
 x = tokens.repeat(5, 1)
+x = x.to(device)
 
 torch.manual_seed(42)
 while x.shape[-1] < max_length:
