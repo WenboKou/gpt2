@@ -207,7 +207,8 @@ for i in range(50):
         logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000
     tokens_per_sec = (dataloader.B * dataloader.T) / (t1 - t0)
