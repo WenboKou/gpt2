@@ -1,3 +1,4 @@
+import inspect
 import math
 from dataclasses import dataclass
 
@@ -95,6 +96,27 @@ class GPT(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0, std=std)
+
+    def config_optimizers(self, weight_decay, learning_rate, device):
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]  # weights and embeddings
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0}
+        ]
+
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed param tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num nodecayed param tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        fused_available = "fused" in inspect.signature(torch.optim.Adam).parameters
+        use_fused = fused_available and "cuda" in device
+        print(f"using fused AdamW: {use_fused}")
+        optimizer = torch.optim.Adam(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8)
+        return optimizer
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
@@ -201,7 +223,7 @@ model = torch.compile(model)
 
 dataloader = DataLoaderLite(4, 32)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+optimizer = model.config_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
@@ -240,4 +262,5 @@ for step in range(max_steps):
     t1 = time.time()
     dt = (t1 - t0) * 1000
     tokens_per_sec = (dataloader.B * dataloader.T) / (t1 - t0)
-    print(f"step: {step}, lr: {lr}, loss: {loss.item()}, norm: {norm:.4f}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
+    print(
+        f"step: {step}, lr: {lr}, loss: {loss.item()}, norm: {norm:.4f}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
