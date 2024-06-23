@@ -221,6 +221,14 @@ model.eval()
 model.to(device)
 model = torch.compile(model)
 
+total_batch_size = 256 # in number of tokens
+B = 4
+T = 32
+assert total_batch_size % (B * T) == 0
+grad_accum_steps = total_batch_size // (B * T)
+print(f"total desired batch size: {total_batch_size}")
+print(f"grad_accum_steps: {grad_accum_steps}")
+
 dataloader = DataLoaderLite(4, 32)
 
 optimizer = model.config_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
@@ -246,11 +254,15 @@ def get_lr(it):
 for step in range(max_steps):
     t0 = time.time()
     optimizer.zero_grad()
-    x, y = dataloader.next_batch()
-    x, y = x.to(device), y.to(device)
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        logits, loss = model(x, y)
-    loss.backward()
+    loss_accum = 0.0
+    for _ in range(grad_accum_steps):
+        x, y = dataloader.next_batch()
+        x, y = x.to(device), y.to(device)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
+        loss /= grad_accum_steps
+        loss_accum += loss.detach()
+        loss.backward()
     # high loss can lead to high gradient, this may shock your model, clip the grad helps prevents shock the model
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     lr = get_lr(step)
@@ -261,6 +273,7 @@ for step in range(max_steps):
         torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    tokens_per_sec = (dataloader.B * dataloader.T) / (t1 - t0)
+    tokens_processed = dataloader.B * dataloader.T * grad_accum_steps
+    tokens_per_sec = tokens_processed / (t1 - t0)
     print(
-        f"step: {step}, lr: {lr}, loss: {loss.item()}, norm: {norm:.4f}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
+        f"step: {step}, lr: {lr}, loss: {loss_accum.item():.6f}, norm: {norm:.4f}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
