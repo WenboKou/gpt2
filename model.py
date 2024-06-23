@@ -194,6 +194,7 @@ torch.set_float32_matmul_precision("high")
 model = GPT(GPTConfig())
 model.eval()
 model.to(device)
+model = torch.compile(model)
 
 dataloader = DataLoaderLite(4, 1024)
 
