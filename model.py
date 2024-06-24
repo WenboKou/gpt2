@@ -4,8 +4,10 @@ import os
 from dataclasses import dataclass
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
+from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 
@@ -206,8 +208,6 @@ class DataLoaderLite:
         return x, y
 
 
-from torch.distributed import init_process_group
-
 ddp = int(os.environ.get("RANK", -1)) != -1
 if ddp:
     assert torch.cuda.is_available(), "use CUDA for DDP"
@@ -243,6 +243,7 @@ model.to(device)
 model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
+raw_model = model.module if ddp else model
 
 total_batch_size = 256  # in number of tokens
 B = 4
@@ -255,7 +256,7 @@ if master_process:
 
 dataloader = DataLoaderLite(4, 32, ddp_rank, ddp_world_size)
 
-optimizer = model.config_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
+optimizer = raw_model.config_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
@@ -289,6 +290,8 @@ for step in range(max_steps):
         if ddp:
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         loss.backward()
+    if ddp:
+        dist.reduce(loss_accum, op=dist.ReduceOp.AVG)
     # high loss can lead to high gradient, this may shock your model, clip the grad helps prevents shock the model
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     lr = get_lr(step)
@@ -301,5 +304,6 @@ for step in range(max_steps):
     dt = (t1 - t0) * 1000
     tokens_processed = dataloader.B * dataloader.T * grad_accum_steps
     tokens_per_sec = tokens_processed / (t1 - t0)
-    print(
-        f"step: {step}, lr: {lr}, loss: {loss_accum.item():.6f}, norm: {norm:.4f}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
+    if master_process:
+        print(
+            f"step: {step}, lr: {lr}, loss: {loss_accum.item():.6f}, norm: {norm:.4f}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
